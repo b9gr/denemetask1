@@ -1,0 +1,58 @@
+# GitLab CI/CD Pipeline Configuration
+variables:
+  DOCKER_REGISTRY: "your-registry.com"
+  APP_NAME: "nodejs-app"
+
+stages:
+  - test
+  - build
+  - deploy
+
+# Job to run tests
+test:
+  stage: test
+  image: node:14
+  script:
+    - npm install
+    - npm test
+  only:
+    - develop
+    - main
+
+# Build and push Docker image
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $DOCKER_REGISTRY/$APP_NAME:$CI_COMMIT_SHA .
+    - docker tag $DOCKER_REGISTRY/$APP_NAME:$CI_COMMIT_SHA $DOCKER_REGISTRY/$APP_NAME:$CI_COMMIT_REF_NAME
+    - docker push $DOCKER_REGISTRY/$APP_NAME:$CI_COMMIT_SHA
+    - docker push $DOCKER_REGISTRY/$APP_NAME:$CI_COMMIT_REF_NAME
+  only:
+    - develop
+    - main
+
+# Update deployment manifests
+deploy:
+  stage: deploy
+  image: alpine/helm:3.7.0
+  script:
+    - |
+      if [ "$CI_COMMIT_REF_NAME" == "develop" ]; then
+        helm upgrade --install $APP_NAME-staging ./helm \
+          --namespace staging \
+          --set image.tag=$CI_COMMIT_SHA \
+          --values ./helm/values-staging.yaml
+      elif [ "$CI_COMMIT_REF_NAME" == "main" ]; then
+        helm upgrade --install $APP_NAME-prod ./helm \
+          --namespace production \
+          --set image.tag=$CI_COMMIT_SHA \
+          --values ./helm/values-prod.yaml
+      fi
+  only:
+    - develop
+    - main
